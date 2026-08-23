@@ -50,7 +50,7 @@ jobs:
         run: npm ci
 
       - name: Run tests
-        run: npm test -- --run
+        run: npm test -- --watchAll=false
 
   build:
     runs-on: ubuntu-latest
