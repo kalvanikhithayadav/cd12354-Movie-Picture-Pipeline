@@ -35,4 +35,4 @@ module.exports = {
     'react/prop-types': process.env.FAIL_LINT ? 2 : 0,
     'react/jsx-uses-vars': 'warn',
   },
-};
+}
