@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'starter/backend/**'
+      - '.github/workflows/backend-cd.yml'
   workflow_dispatch:
 
 jobs:
@@ -34,7 +35,6 @@ jobs:
       - name: Run lint
         run: pipenv run flake8
 
-
   test:
     runs-on: ubuntu-latest
 
@@ -60,7 +60,6 @@ jobs:
       - name: Run tests
         run: pipenv run pytest
 
-
   build:
     runs-on: ubuntu-latest
 
@@ -85,16 +84,19 @@ jobs:
 
       - name: Build backend Docker image
         working-directory: starter/backend
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
           docker build \
-            -t ${{ steps.login-ecr.outputs.registry }}/backend:${{ github.sha }} \
+            -t "$ECR_REGISTRY/backend:${{ github.sha }}" \
             .
 
       - name: Push backend image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
           docker push \
-            ${{ steps.login-ecr.outputs.registry }}/backend:${{ github.sha }}
-
+            "$ECR_REGISTRY/backend:${{ github.sha }}"
 
   deploy:
     runs-on: ubuntu-latest
@@ -119,15 +121,51 @@ jobs:
             --region us-east-1 \
             --name cluster
 
-      - name: Deploy backend to EKS
+      - name: Check EKS nodes
+        run: |
+          echo "===== EKS NODES ====="
+          kubectl get nodes -o wide || true
+
+      - name: Check existing backend pods
+        run: |
+          echo "===== BACKEND PODS BEFORE DEPLOYMENT ====="
+          kubectl get pods -l app=backend -o wide || true
+
+      - name: Deploy backend manifests
         working-directory: starter/backend
         run: |
           kubectl apply -k k8s
 
+      - name: Update backend image
+        run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-
           IMAGE_URI="$ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/backend:${{ github.sha }}"
 
-          kubectl set image deployment/backend backend="$IMAGE_URI"
+          echo "Deploying image:"
+          echo "$IMAGE_URI"
 
+          kubectl set image deployment/backend \
+            backend="$IMAGE_URI"
+
+      - name: Check backend deployment
+        run: |
+          echo "===== DEPLOYMENT ====="
+          kubectl get deployment backend -o wide || true
+
+          echo "===== PODS ====="
+          kubectl get pods -l app=backend -o wide || true
+
+          echo "===== EVENTS ====="
+          kubectl get events --sort-by='.lastTimestamp' | tail -50 || true
+
+      - name: Wait for backend rollout
+        run: |
           kubectl rollout status deployment/backend --timeout=180s
+
+      - name: Verify backend deployment
+        run: |
+          echo "===== FINAL DEPLOYMENT ====="
+          kubectl get deployment backend -o wide
+
+          echo "===== FINAL PODS ====="
+          kubectl get pods -l app=backend -o wide
